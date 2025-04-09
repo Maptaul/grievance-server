@@ -30,7 +30,18 @@ async function run() {
     // User registration endpoint
     app.post("/users", async (req, res) => {
       const user = req.body;
-      const result = await usersCollection.insertOne(user);
+      const query = { email: user.email.toLowerCase() };
+      const updateDoc = {
+        $set: {
+          email: user.email.toLowerCase(),
+          name: user.name,
+          photo: user.photo,
+          role: user.role || "citizen",
+          createdAt: user.createdAt || new Date().toISOString(),
+        },
+      };
+      const options = { upsert: true }; // Insert if not exists, update if exists
+      const result = await usersCollection.updateOne(query, updateDoc, options);
       res.send(result);
     });
 
@@ -39,7 +50,6 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
-
 
     app.get("/users/:email", async (req, res) => {
       const email = req.params.email.toLowerCase();
