@@ -40,11 +40,12 @@ async function run() {
       res.send(result);
     });
 
+
     app.get("/users/:email", async (req, res) => {
-      const email = req.params.email;
-      const query = { email: email };
+      const email = req.params.email.toLowerCase();
+      const query = { email: { $regex: new RegExp(`^${email}$`, "i") } };
       const user = await usersCollection.findOne(query);
-      res.send(user);
+      res.send(user || {});
     });
 
     app.put("/users/:email", async (req, res) => {
