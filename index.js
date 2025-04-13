@@ -101,13 +101,27 @@ async function run() {
       res.send(result);
     });
 
+    // Updated PUT /complaints/:id to support fileUrl, comment, and status
     app.put("/complaints/:id", async (req, res) => {
-      const id = req.params.id;
-      const { status } = req.body;
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = { $set: { status: status } };
-      const result = await complaintsCollection.updateOne(query, updateDoc);
-      res.send(result);
+      try {
+        const id = req.params.id;
+        const { status, fileUrl, comment } = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            ...(status && { status }), // Only include status if provided
+            ...(fileUrl && { fileUrl }), // Only include fileUrl if provided
+            ...(comment && { comment }), // Only include comment if provided
+          },
+        };
+        const result = await complaintsCollection.updateOne(query, updateDoc);
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: "Complaint not found" });
+        }
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
+      }
     });
 
     app.delete("/complaints/:id", async (req, res) => {
