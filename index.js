@@ -105,19 +105,32 @@ async function run() {
     app.put("/complaints/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const { status, fileUrl, comment } = req.body;
-        const query = { _id: new ObjectId(id) };
+        const { status, newFileUrl, newDescription, newComment, newLocation } =
+          req.body;
+
         const updateDoc = {
-          $set: {
-            ...(status && { status }), // Only include status if provided
-            ...(fileUrl && { fileUrl }), // Only include fileUrl if provided
-            ...(comment && { comment }), // Only include comment if provided
+          $set: { status },
+          $push: {
+            history: {
+              $each: [
+                {
+                  timestamp: new Date().toISOString(),
+                  ...(newFileUrl && { fileUrl: newFileUrl }),
+                  ...(newDescription && { description: newDescription }),
+                  ...(newComment && { comment: newComment }),
+                  ...(newLocation && { location: newLocation }),
+                },
+              ],
+              $position: 0,
+            },
           },
         };
-        const result = await complaintsCollection.updateOne(query, updateDoc);
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ error: "Complaint not found" });
-        }
+
+        const result = await complaintsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updateDoc
+        );
+
         res.send(result);
       } catch (err) {
         res.status(500).send({ error: err.message });
