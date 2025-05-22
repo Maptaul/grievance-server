@@ -1,12 +1,17 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
+const multer = require("multer");
+const path = require("path");
+const bcrypt = require("bcrypt");
+
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.6vndn.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -34,19 +39,39 @@ async function run() {
       const updateDoc = {
         $set: {
           email: user.email.toLowerCase(),
-          name: user.name,
-          photo: user.photo,
+          name: user.name || user.displayName || "", // Support Google name
+          photo:
+            user.photo || user.photoURL || "https://via.placeholder.com/150", // Support Google photo
           role: user.role || "citizen",
+          designation: user.designation || "",
+          department: user.department || "",
+          mobileNumber: user.mobileNumber || "",
+          suspended: user.suspended || false,
           createdAt: user.createdAt || new Date().toISOString(),
         },
       };
-      const options = { upsert: true }; // Insert if not exists, update if exists
-      const result = await usersCollection.updateOne(query, updateDoc, options);
-      res.send(result);
+
+      if (user.password) {
+        const saltRounds = 10;
+        updateDoc.$set.password = await bcrypt.hash(user.password, saltRounds);
+      }
+      const options = { upsert: true };
+      try {
+        const result = await usersCollection.updateOne(
+          query,
+          updateDoc,
+          options
+        );
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
+      }
     });
 
     app.get("/users", async (req, res) => {
-      const cursor = usersCollection.find();
+      const { role } = req.query;
+      const query = role ? { role } : {};
+      const cursor = usersCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
     });
@@ -54,24 +79,38 @@ async function run() {
     app.get("/users/:email", async (req, res) => {
       const email = req.params.email.toLowerCase();
       const query = { email: { $regex: new RegExp(`^${email}$`, "i") } };
-      const user = await usersCollection.findOne(query);
-      res.send(user || {});
+      try {
+        const user = await usersCollection.findOne(query);
+        res.send(user || {});
+      } catch (err) {
+        res.status(500).send({ error: err.message });
+      }
     });
 
     app.put("/users/:email", async (req, res) => {
-      const email = req.params.email;
-      const { role } = req.body;
-      const query = { email: email };
-      const updateDoc = { $set: { role: role } };
-      const result = await usersCollection.updateOne(query, updateDoc);
-      res.send(result);
+      const email = req.params.email.toLowerCase();
+      const { role, suspended } = req.body;
+      const query = { email };
+      const updateDoc = { $set: {} };
+      if (role !== undefined) updateDoc.$set.role = role;
+      if (suspended !== undefined) updateDoc.$set.suspended = suspended;
+      try {
+        const result = await usersCollection.updateOne(query, updateDoc);
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
+      }
     });
 
     app.delete("/users/:email", async (req, res) => {
-      const email = req.params.email;
-      const query = { email: email };
-      const result = await usersCollection.deleteOne(query);
-      res.send(result);
+      const email = req.params.email.toLowerCase();
+      const query = { email };
+      try {
+        const result = await usersCollection.deleteOne(query);
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
+      }
     });
 
     app.get("/category", async (req, res) => {
@@ -82,7 +121,12 @@ async function run() {
 
     app.post("/complaints", async (req, res) => {
       const complaint = req.body;
-      const result = await complaintsCollection.insertOne(complaint);
+      const result = await complaintsCollection.insertOne({
+        ...complaint,
+        status: "Pending",
+        employeeId: null,
+        history: [],
+      });
       res.send(result);
     });
 
@@ -92,7 +136,6 @@ async function run() {
       res.send(result);
     });
 
-    // New endpoint: Get complaints by user email
     app.get("/complaints/user/:email", async (req, res) => {
       const email = req.params.email;
       const query = { email: email };
@@ -101,30 +144,57 @@ async function run() {
       res.send(result);
     });
 
-    // Updated PUT /complaints/:id to support fileUrl, comment, and status
     app.put("/complaints/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const { status, newFileUrl, newDescription, newComment, newLocation } =
-          req.body;
+        const { status, history } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid complaint ID" });
+        }
+
+        const complaint = await complaintsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!complaint) {
+          return res.status(404).send({ message: "Complaint not found" });
+        }
+
+        const validTransitions = {
+          Pending: ["Viewed", "Assigned"],
+          Viewed: ["Assigned"],
+          Assigned: ["Ongoing", "Resolved"],
+          Ongoing: ["Resolved"],
+        };
+
+        if (!status || !validTransitions[complaint.status]?.includes(status)) {
+          return res.status(400).send({
+            message: `Invalid status transition from ${complaint.status} to ${
+              status || "undefined"
+            }`,
+          });
+        }
+
+        let newHistory = complaint.history || [];
+        if (history) {
+          try {
+            newHistory = JSON.parse(history);
+          } catch (err) {
+            return res.status(400).send({ message: "Invalid history format" });
+          }
+        }
 
         const updateDoc = {
-          $set: { status },
-          $push: {
-            history: {
-              $each: [
-                {
-                  timestamp: new Date().toISOString(),
-                  ...(newFileUrl && { fileUrl: newFileUrl }),
-                  ...(newDescription && { description: newDescription }),
-                  ...(newComment && { comment: newComment }),
-                  ...(newLocation && { location: newLocation }),
-                },
-              ],
-              $position: 0,
-            },
+          $set: {
+            status,
+            history: newHistory,
           },
         };
+
+        if (status !== "Assigned") {
+          updateDoc.$set.employeeId = null;
+        }
 
         const result = await complaintsCollection.updateOne(
           { _id: new ObjectId(id) },
