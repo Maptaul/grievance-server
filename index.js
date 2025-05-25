@@ -28,9 +28,7 @@ async function run() {
   try {
     const usersCollection = client.db("grievance").collection("users");
     const categoryCollection = client.db("grievance").collection("category");
-    const complaintsCollection = client
-      .db("grievance")
-      .collection("complaints");
+    const complaintsCollection = client.db("grievance").collection("complaints");
 
     // User registration endpoint
     app.post("/users", async (req, res) => {
@@ -39,9 +37,9 @@ async function run() {
       const updateDoc = {
         $set: {
           email: user.email.toLowerCase(),
-          name: user.name || user.displayName || "", // Support Google name
+          name: user.name || user.displayName || "",
           photo:
-            user.photo || user.photoURL || "https://via.placeholder.com/150", // Support Google photo
+            user.photo || user.photoURL || "https://via.placeholder.com/150",
           role: user.role || "citizen",
           designation: user.designation || "",
           department: user.department || "",
@@ -144,10 +142,43 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/complaints/employee/:id", async (req, res) => {
+      try {
+        const employeeId = req.params.id;
+        // Query employeeId as a string to match the current data in the database
+        const query = { employeeId: employeeId };
+        const cursor = complaintsCollection.find(query);
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: err.message });
+      }
+    });
+
+    // NEW: GET /complaints/:id - Fetch a single complaint by ID
+    app.get("/complaints/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid complaint ID" });
+        }
+        const complaint = await complaintsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!complaint) {
+          return res.status(404).send({ message: "Complaint not found" });
+        }
+        res.status(200).json(complaint);
+      } catch (err) {
+        console.error("Error fetching complaint:", err);
+        res.status(500).send({ error: err.message });
+      }
+    });
+
     app.put("/complaints/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const { status, history } = req.body;
+        const { status, history, employeeId } = req.body;
 
         if (!ObjectId.isValid(id)) {
           return res.status(400).send({ message: "Invalid complaint ID" });
@@ -192,7 +223,17 @@ async function run() {
           },
         };
 
-        if (status !== "Assigned") {
+        if (status === "Assigned") {
+          if (!employeeId) {
+            return res.status(400).send({
+              message: "employeeId is required when assigning a complaint",
+            });
+          }
+          // Store employeeId as an ObjectId for future consistency
+          updateDoc.$set.employeeId = ObjectId.isValid(employeeId)
+            ? new ObjectId(employeeId)
+            : employeeId;
+        } else if (status === "Pending" || status === "Viewed") {
           updateDoc.$set.employeeId = null;
         }
 
