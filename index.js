@@ -28,7 +28,9 @@ async function run() {
   try {
     const usersCollection = client.db("grievance").collection("users");
     const categoryCollection = client.db("grievance").collection("category");
-    const complaintsCollection = client.db("grievance").collection("complaints");
+    const complaintsCollection = client
+      .db("grievance")
+      .collection("complaints");
 
     // User registration endpoint
     app.post("/users", async (req, res) => {
